@@ -2,6 +2,7 @@
   "name": "luciteria-collector-cabinet",
   "version": "2.5.0",
   "private": true,
+  "type": "module",
   "description": "Shopify embedded app for the Luciteria Collector Cabinet experience",
   "scripts": {
     "build": "remix vite:build",

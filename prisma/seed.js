@@ -12,7 +12,11 @@
  * The dev server uses in-memory mock-db.server.js instead.
  */
 
-const { PrismaClient } = require("@prisma/client");
+import pkg from "@prisma/client";
+const { PrismaClient } = pkg;
+import bcrypt from "bcryptjs";
+import { v4 as uuidv4 } from "uuid";
+
 const prisma = new PrismaClient();
 
 // ─── Collection Types ────────────────────────────────────────
@@ -408,8 +412,6 @@ async function main() {
   // ═══════════════════════════════════════════════════════════════
   console.log("🔑 Seeding admin user...");
   try {
-    const bcrypt = require("bcryptjs");
-    const { v4: uuidv4 } = require("uuid");
     const adminEmail = "admin@luciteria.com";
     const existing = await prisma.user.findUnique({ where: { email: adminEmail } });
     if (existing) {
