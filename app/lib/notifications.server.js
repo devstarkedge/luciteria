@@ -132,6 +132,28 @@ The Luciteria Team
 ---
 
 This is an automated notification based on your collection activity.`;
+      } else if (template === 'restock_alert') {
+        const userName = data.customerName || 'Collector';
+        const elementSymbol = data.elementSymbol || '';
+        const productTitle = data.productTitle || '';
+        const qty = data.inventoryQty || 0;
+
+        text = `Hi ${userName},
+
+Great news! 🎉 The item you've been waiting for is back in stock:
+
+🔔 ${productTitle} (${elementSymbol})
+
+We currently have ${qty} available in stock. Since this is a high-demand item, it may sell out quickly.
+
+👉 Visit our shop to secure yours today!
+
+Happy Collecting,
+The Luciteria Team
+
+---
+
+This is an automated restock alert from your Luciteria Collector Cabinet wishlist.`;
       } else {
         // Fallback for other templates
         text = `Hi ${data.customerName || 'Collector'},\n\n`;

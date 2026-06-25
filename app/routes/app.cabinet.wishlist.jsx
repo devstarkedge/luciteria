@@ -18,6 +18,7 @@ import {
 import { getUnreadCount } from "../lib/notifications-db.server";
 import { ELEMENTS_118 } from "../data/elements.server";
 import { FORMATS, FORMAT_LIST, parseSizes } from "../lib/formats";
+import { prisma } from "../lib/db.server";
 
 
 const PRIORITY_LABEL = { 3: "High", 2: "Medium", 1: "Low", 0: "Low" };
@@ -35,6 +36,10 @@ export const loader = async ({ request }) => {
 
   const preferredFormat = authUser.subscriptionFormat || "lucite_cube";
 
+  // Fetch all products from Prisma database to get fresh stock and prices
+  const allProducts = await prisma.product.findMany();
+  const productMap = new Map(allProducts.map(p => [p.sku, p]));
+
   const wishlist = wantedItems.map((it) => {
     const el = ELEMENTS_118.find((e) => e.sym === it.elementSymbol);
     let variant = null;
@@ -47,10 +52,14 @@ export const loader = async ({ request }) => {
       variant = el.products[0];
     }
 
-    const price = variant?.price ?? 0;
-    const available = variant?.availableForSale ?? false;
-    const qty = variant?.inventoryQty ?? 0;
-    const stock = !variant ? "Out of Stock" : !available ? "Out of Stock" : (qty > 0 && qty <= 5) ? "Low Stock" : "In Stock";
+    const dbProduct = variant?.sku ? productMap.get(variant.sku) : null;
+
+    const price = dbProduct ? dbProduct.priceUsd : (variant?.price ?? 0);
+    const qty = dbProduct ? dbProduct.inventoryQty : (variant?.inventoryQty ?? 0);
+    const status = dbProduct ? dbProduct.status : (variant?.availableForSale ? "Active" : "Archived");
+
+    const isAvailable = dbProduct ? (status === "Active" && qty > 0) : (variant?.availableForSale ?? false);
+    const stock = !variant ? "Out of Stock" : !isAvailable ? "Out of Stock" : (qty > 0 && qty <= 5) ? "Low Stock" : "In Stock";
 
     const displayName = variant?.title || it.elementName;
 

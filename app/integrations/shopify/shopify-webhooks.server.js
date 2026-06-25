@@ -33,6 +33,9 @@
 import { IS_PROTOTYPE } from "../../config/environment.server.js";
 import { logger } from "../../lib/error-handling.server.js";
 import { SHOPIFY_CONFIG } from "../../config/environment.server.js";
+import { prisma } from "../../lib/db.server.js";
+import { syncSkuAvailability } from "../../lib/inventory-sync.server.js";
+import { shopifyClient } from "./shopify-client.server.js";
 
 const MODULE = "shopify-webhooks";
 
@@ -125,13 +128,249 @@ async function handleProductDelete(payload) {
 }
 
 async function handleInventoryUpdate(payload) {
-  logger.info(MODULE, "inventory_levels/update", { inventory_item_id: payload.inventory_item_id });
-  // TODO [PRODUCTION]:
-  // 1. Map inventory_item_id → product
-  // 2. Update local inventoryQty
-  // 3. If stock dropped to 0, trigger OOS shifting for affected assignments
-  // 4. If stock came back, notify wishlist customers (if restockAlerts enabled)
-  return { action: "inventory_updated" };
+  const inventoryItemId = String(payload.inventory_item_id);
+  const availableQty = payload.available;
+
+  logger.info(MODULE, "inventory_levels/update", { inventory_item_id: inventoryItemId, available: availableQty });
+
+  // 1. Find product locally by shopifyInventoryItemId
+  let product = await prisma.product.findFirst({
+    where: {
+      OR: [
+        { shopifyInventoryItemId: inventoryItemId },
+        { shopifyInventoryItemId: `gid://shopify/InventoryItem/${inventoryItemId}` }
+      ]
+    }
+  });
+
+  // 2. If not found locally, fetch details from Shopify via GraphQL
+  if (!product) {
+    logger.info(MODULE, `Product with inventory item ID ${inventoryItemId} not found locally. Querying Shopify...`);
+    const graphqlId = inventoryItemId.startsWith("gid://") ? inventoryItemId : `gid://shopify/InventoryItem/${inventoryItemId}`;
+    
+    const query = `
+      query GetInventoryItem($id: ID!) {
+        node(id: $id) {
+          ... on InventoryItem {
+            id
+            variant {
+              id
+              title
+              sku
+              price
+              product {
+                id
+                title
+                handle
+                description
+                tags
+              }
+              elementSymbol: metafield(namespace: "custom", key: "element_symbol") {
+                value
+              }
+              periodic_size: metafield(namespace: "custom", key: "periodic_size") {
+                value
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const shopifyRes = await shopifyClient.graphql(query, { id: graphqlId });
+      const inventoryItem = shopifyRes?.data?.node;
+      const variant = inventoryItem?.variant;
+      
+      if (variant && variant.sku) {
+        // Find product by SKU
+        product = await prisma.product.findUnique({
+          where: { sku: variant.sku }
+        });
+
+        if (product) {
+          // Update the product with Shopify IDs for future webhooks
+          const rawVariantId = variant.id.split("/").pop(); // extract numeric ID from GID if needed
+          const rawProductId = variant.product?.id?.split("/")?.pop();
+
+          await prisma.product.update({
+            where: { id: product.id },
+            data: {
+              shopifyInventoryItemId: inventoryItemId,
+              shopifyVariantId: rawVariantId || product.shopifyVariantId,
+              shopifyProductId: rawProductId || product.shopifyProductId,
+            }
+          });
+          logger.info(MODULE, `Updated product SKU: ${product.sku} with shopifyInventoryItemId: ${inventoryItemId}`);
+        } else {
+          logger.info(MODULE, `Shopify variant SKU "${variant.sku}" not found in local product catalog. Creating new product...`);
+          
+          const rawVariantId = variant.id.split("/").pop();
+          const rawProductId = variant.product?.id?.split("/")?.pop();
+          
+          // Import ELEMENTS_118 to resolve element symbol and name
+          const { ELEMENTS_118 } = await import("../../data/elements.server.js");
+          
+          // Try to get element symbol from metafield first, then SKU, then fallback
+          let symbol = variant.elementSymbol?.value || "";
+          if (!symbol && variant.sku) {
+            const matchedEl = ELEMENTS_118.find(el => variant.sku.toLowerCase().startsWith(el.sym.toLowerCase()));
+            if (matchedEl) symbol = matchedEl.sym;
+          }
+          if (!symbol) symbol = "Li"; // fallback
+          
+          const element = ELEMENTS_118.find(el => el.sym.toLowerCase() === symbol.toLowerCase());
+          const elementName = element ? element.name : "Lithium";
+          const atomicNumber = element ? element.z : 3;
+          
+          // Derive category, format, and collection types
+          const tags = variant.product?.tags || [];
+          const variantTitle = variant.title || "";
+          
+          let category = "Lucite Cube";
+          let format = "50mm";
+          let collectionTypes = ["lucite"];
+
+          const allTags = tags.map(t => t.toLowerCase());
+
+          if (allTags.includes("ampules") || variant.sku?.toLowerCase()?.includes("amp") || variantTitle.toLowerCase().includes("ampule")) {
+            category = "Ampoule";
+            format = "ampoule";
+            collectionTypes = ["ampoules"];
+          } else if (allTags.includes("10mm") || variant.sku?.toLowerCase()?.includes("10mm")) {
+            category = "Metal Cube";
+            format = "10mm";
+            collectionTypes = ["10mm"];
+          } else if (allTags.includes("25.4mm") || variant.sku?.toLowerCase()?.includes("25.4mm") || variant.sku?.toLowerCase()?.includes("25mm")) {
+            category = "Metal Cube";
+            format = "25.4mm";
+            collectionTypes = ["25.4mm"];
+          } else if (variant.sku?.toLowerCase()?.includes("2x2")) {
+            category = "Lucite Cube";
+            format = "50mm";
+            collectionTypes = ["lucite"];
+          }
+          
+          const price = parseFloat(variant.price) || 0;
+          
+          product = await prisma.product.create({
+            data: {
+              sku: variant.sku,
+              shopifyProductId: rawProductId,
+              shopifyVariantId: rawVariantId,
+              shopifyInventoryItemId: inventoryItemId,
+              handle: variant.product?.handle || null,
+              title: variant.product?.title || variantTitle,
+              description: variant.product?.description || "",
+              elementSymbol: symbol,
+              elementName: elementName,
+              atomicNumber: atomicNumber,
+              category: category,
+              format: format,
+              collectionTypes: JSON.stringify(collectionTypes),
+              status: "Active",
+              inventoryQty: 0, // set initially to 0 so the first syncSkuAvailability call triggers OOS -> In-Stock alert if applicable
+              priceUsd: price,
+              retailPrice: price,
+              rarityTier: "common",
+              availableForSubscription: false
+            }
+          });
+          logger.info(MODULE, `Successfully created product SKU: ${product.sku} with quantity: 0`);
+        }
+      } else {
+        logger.warn(MODULE, `Could not find variant details for inventory item ID ${inventoryItemId} on Shopify`);
+      }
+    } catch (err) {
+      logger.error(MODULE, `Error fetching inventory item from Shopify: ${err.message}`, err);
+    }
+  }
+
+  // 3. If product is found (either directly or via SKU lookup), update the inventory
+  if (product) {
+    const result = await syncSkuAvailability(product.sku, availableQty);
+    logger.info(MODULE, `Inventory updated for SKU ${product.sku}: ${result?.prevQty ?? 0} -> ${availableQty}`);
+
+    // If stock went from 0 (or less) to in-stock (> 0), send restock notifications
+    const prevStock = result?.prevQty ?? 0;
+    if (prevStock <= 0 && availableQty > 0) {
+      try {
+        const wishlistEntries = await prisma.wishlistItem.findMany({
+          where: {
+            productId: product.id,
+          },
+          include: {
+            customer: {
+              include: {
+                preferences: true,
+              },
+            },
+          },
+        });
+
+        if (wishlistEntries.length > 0) {
+          logger.info(MODULE, `Found ${wishlistEntries.length} wishlist entries for SKU ${product.sku}. Sending restock alerts...`);
+          const { notify } = await import("../../lib/notifications-db.server.js");
+          const { notifyRestockAlert } = await import("../../lib/notifications.server.js");
+          
+          for (const entry of wishlistEntries) {
+            const customer = entry.customer;
+            
+            // Find corresponding User by email
+            const user = await prisma.user.findUnique({
+              where: { email: customer.email }
+            });
+
+            const productUrl = `/app/cabinet/shop`;
+            const updatedProductInfo = { ...product, inventoryQty: availableQty };
+
+            if (user) {
+              // Trigger in-app notification + preference-aware email via notify()
+              const dedupeKey = `restock:${product.id}:${availableQty}:${Math.floor(Date.now() / (1000 * 60 * 15))}`;
+              
+              await notify(user.id, {
+                category: "RESTOCK",
+                title: `${product.title} is back in stock!`,
+                body: `${product.title} (${product.elementSymbol}) is now back in stock with ${availableQty} units available.`,
+                linkUrl: productUrl,
+                dedupeKey,
+                email: {
+                  to: user.email,
+                  subject: `🔔 ${product.elementSymbol} is back in stock!`,
+                  template: "restock_alert",
+                  data: {
+                    customerName: user.firstName || customer.firstName,
+                    elementSymbol: product.elementSymbol,
+                    productTitle: product.title,
+                    inventoryQty: availableQty,
+                    linkUrl: productUrl
+                  }
+                }
+              });
+              logger.info(MODULE, `Restock notification successfully dispatched via notify() for user ${user.email} (SKU: ${product.sku})`);
+            } else {
+              // Fallback to direct email if no database User account exists
+              const prefs = customer.preferences;
+              const shouldNotify = entry.notifyOnRestock || (prefs?.restockAlerts !== false);
+              
+              if (shouldNotify) {
+                await notifyRestockAlert(customer, updatedProductInfo);
+                logger.info(MODULE, `Restock direct fallback email sent to customer ${customer.email} (SKU: ${product.sku})`);
+              } else {
+                logger.info(MODULE, `Restock notification skipped for customer ${customer.email} due to preferences`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(MODULE, `Failed to send restock notifications: ${err.message}`, err);
+      }
+    }
+
+    return { action: "inventory_updated", sku: product.sku, prevQty: result?.prevQty, newQty: availableQty };
+  }
+
+  return { action: "inventory_update_skipped", reason: "product_not_found" };
 }
 
 async function handleCustomerCreate(payload) {
