@@ -1,13 +1,27 @@
 import { json } from "@remix-run/node";
 
 export const action = async ({ request }) => {
-    const data = await request.json();
+    try {
+        // ✅ raw text lo pehle
+        const rawBody = await request.text();
+        console.log("Raw body:", rawBody);
 
-    console.log("Webhook received:", data);
+        // ✅ safe parse
+        const data = JSON.parse(rawBody);
+        console.log("Parsed:", data);
 
-    if (data.available > 0) {
-        console.log("Back in stock!");
+        // ✅ simple check
+        if (data.available > 0) {
+            console.log("Back in stock!");
+        }
+
+        return json({ ok: true });
+    } catch (error) {
+        console.error("Webhook error:", error);
+
+        return json(
+            { error: "Webhook failed" },
+            { status: 200 }
+        );
     }
-
-    return json({ success: true });
 };
