@@ -46,8 +46,73 @@ const ALWAYS_ALLOW_PREFIXES = [
 const ALWAYS_ALLOW_EXACT = new Set([
   "/favicon.ico",
   "/robots.txt",
-  "/sitemap.xml",
 ]);
+
+/**
+ * Resolves a storefront redirect URL for legacy marketing / support / policy paths.
+ * Returns the destination URL (with query parameters preserved) or null if no redirect.
+ *
+ * @param {string} pathname
+ * @param {string} search
+ * @returns {string|null}
+ */
+export function getMarketingRedirect(pathname, search = "") {
+  let normalized = pathname.toLowerCase();
+  if (normalized.endsWith("/") && normalized !== "/") {
+    normalized = normalized.slice(0, -1);
+  }
+
+  const mappings = {
+    "/sitemap.xml": "https://luciteria.com/sitemap.xml",
+    "/contact": "https://luciteria.com/pages/contact",
+    "/contact-us": "https://luciteria.com/pages/contact",
+    "/contactus": "https://luciteria.com/pages/contact",
+    "/contacto": "https://luciteria.com/pages/contact",
+    "/contacto-us": "https://luciteria.com/pages/contact",
+    "/es/contacto": "https://luciteria.com/pages/contact",
+    "/en/contact": "https://luciteria.com/pages/contact",
+    "/contato": "https://luciteria.com/pages/contact",
+    "/kontakt": "https://luciteria.com/pages/contact",
+    "/contatti": "https://luciteria.com/pages/contact",
+    "/reach-us": "https://luciteria.com/pages/contact",
+    "/get-in-touch": "https://luciteria.com/pages/contact",
+    "/about": "https://luciteria.com",
+    "/about-us": "https://luciteria.com",
+    "/sobre-nosotros": "https://luciteria.com",
+    "/nosotros": "https://luciteria.com",
+    "/company": "https://luciteria.com",
+    "/team": "https://luciteria.com",
+    "/help": "https://luciteria.com/pages/faq",
+    "/support": "https://luciteria.com/pages/faq",
+    "/pricing": "https://luciteria.com/pages/faq",
+    "/terms": "https://luciteria.com/policies/terms-of-service",
+    "/legal": "https://luciteria.com/policies/terms-of-service",
+    "/impressum": "https://luciteria.com/policies/terms-of-service",
+    "/privacy": "https://luciteria.com/policies/privacy-policy",
+  };
+
+  if (mappings[normalized]) {
+    return mappings[normalized] + search;
+  }
+
+  const prefixes = [
+    "/policies/",
+    "/pages/",
+    "/collections/",
+    "/products/",
+    "/blogs/",
+    "/cart",
+    "/checkout",
+  ];
+
+  for (const prefix of prefixes) {
+    if (normalized.startsWith(prefix)) {
+      return `https://luciteria.com${pathname}${search}`;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Is the path a true /admin path? Matches "/admin" exactly and "/admin/...".
@@ -111,8 +176,15 @@ export function evaluateRoute({ info, pathname }) {
  * @returns {ReturnType<typeof getSubdomainInfo>}
  */
 export function enforceSubdomainRouting(request) {
-  const info = getSubdomainInfo(request);
   const url = new URL(request.url);
+
+  // Intercept legacy marketing, support, and policy paths and redirect to the storefront.
+  const marketingRedirectUrl = getMarketingRedirect(url.pathname, url.search);
+  if (marketingRedirectUrl) {
+    throw redirect(marketingRedirectUrl, { status: 301 });
+  }
+
+  const info = getSubdomainInfo(request);
   const decision = evaluateRoute({ info, pathname: url.pathname });
 
   if (decision.action === "redirect") {

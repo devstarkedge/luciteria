@@ -15,6 +15,7 @@ import {
   isAdminPath,
   isBypassPath,
   enforceSubdomainRouting,
+  getMarketingRedirect,
 } from "./app/lib/subdomain-guard.server.js";
 
 let passed = 0;
@@ -210,6 +211,31 @@ console.log("=== getSubdomainInfo with FORCE_SUBDOMAIN ===");
   ok(info.isAdmin && info.forced, "FORCE_SUBDOMAIN=admin overrides localhost");
   process.env.FORCE_SUBDOMAIN = prev || "";
   if (!prev) delete process.env.FORCE_SUBDOMAIN;
+}
+
+console.log("=== marketing and policy redirects ===");
+// getMarketingRedirect function tests
+eq(getMarketingRedirect("/contact"), "https://luciteria.com/pages/contact", "contact page redirect");
+eq(getMarketingRedirect("/CONTACT-US/"), "https://luciteria.com/pages/contact", "contact-us page redirect (normalized)");
+eq(getMarketingRedirect("/es/contacto"), "https://luciteria.com/pages/contact", "es/contacto redirect");
+eq(getMarketingRedirect("/about-us"), "https://luciteria.com", "about-us redirect");
+eq(getMarketingRedirect("/sitemap.xml"), "https://luciteria.com/sitemap.xml", "sitemap redirect");
+eq(getMarketingRedirect("/policies/privacy-policy"), "https://luciteria.com/policies/privacy-policy", "privacy policy prefix redirect");
+eq(getMarketingRedirect("/products/element-cube-copper", "?v=1"), "https://luciteria.com/products/element-cube-copper?v=1", "products variant redirect");
+eq(getMarketingRedirect("/app/cabinet"), null, "app cabinet path does NOT redirect");
+
+// enforceSubdomainRouting thrown redirects
+{
+  const r = runGuard("app.luciteria.com", "/contact");
+  ok(r.thrown && r.status === 301 && r.location === "https://luciteria.com/pages/contact", "app /contact throws 301 to storefront");
+}
+{
+  const r = runGuard("luciteria.vercel.app", "/sitemap.xml");
+  ok(r.thrown && r.status === 301 && r.location === "https://luciteria.com/sitemap.xml", "vercel /sitemap.xml throws 301 to storefront");
+}
+{
+  const r = runGuard("admin.luciteria.com", "/legal");
+  ok(r.thrown && r.status === 301 && r.location === "https://luciteria.com/policies/terms-of-service", "admin /legal throws 301 to terms of service");
 }
 
 console.log("\n──────────────────────────────────────");
