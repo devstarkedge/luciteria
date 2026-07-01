@@ -12,6 +12,7 @@ import { Link, useLocation, Form } from "@remix-run/react";
 const CUSTOMER_NAV = [
   { label: "Dashboard", path: "/app/cabinet", icon: "fa-gauge", exact: true },
   { label: "Collection", path: "/app/cabinet/periodic-table", icon: "fa-table-cells" },
+  { label: "My Ledger", path: "/app/cabinet/summary", icon: "fa-list" },
   { label: "Wishlist", path: "/app/cabinet/wishlist", icon: "fa-heart" },
   { label: "Shop", path: "/app/cabinet/shop", icon: "fa-cart-shopping" },
   { label: "Notifications", path: "/app/cabinet/notifications", icon: "fa-bell", badgeKey: "unread" },
