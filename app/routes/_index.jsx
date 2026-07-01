@@ -31,6 +31,7 @@ export const loader = async ({ request }) => {
   return json({});
 };
 
+
 const STATS = [
   { value: "85+", label: "Elements Available" },
   { value: "10+", label: "Years of Expertise" },
@@ -94,11 +95,10 @@ export default function Index() {
                 {HERO_TILES.map((t, i) => (
                   <div
                     key={i}
-                    className={`flex aspect-square w-12 items-center justify-center rounded-btn text-sm font-medium sm:w-14 ${
-                      t.accent
-                        ? "bg-luc-blue text-white"
-                        : "bg-white text-luc-ink shadow-card"
-                    }`}
+                    className={`flex aspect-square w-12 items-center justify-center rounded-btn text-sm font-medium sm:w-14 ${t.accent
+                      ? "bg-luc-blue text-white"
+                      : "bg-white text-luc-ink shadow-card"
+                      }`}
                   >
                     {t.sym}
                   </div>
