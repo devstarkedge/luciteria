@@ -295,71 +295,75 @@ async function handleInventoryUpdate(payload) {
     const prevStock = result?.prevQty ?? 0;
     if (prevStock <= 0 && availableQty > 0) {
       try {
-        const wishlistEntries = await prisma.wishlistItem.findMany({
+        const wishlistEntries = await prisma.collectionItem.findMany({
           where: {
-            productId: product.id,
+            elementSymbol: product.elementSymbol,
+            state: "WANTED",
           },
           include: {
-            customer: {
-              include: {
-                preferences: true,
-              },
-            },
+            user: true,
           },
         });
 
+        // Helper to check if product format matches wishlist choice
+        const formatMatches = (wishlistFormat, prod) => {
+          if (!wishlistFormat) return true;
+          const wish = wishlistFormat.toLowerCase();
+          const prodFmt = prod.format ? prod.format.toLowerCase() : "";
+          const prodCat = prod.category ? prod.category.toLowerCase() : "";
+          
+          if (wish === "10mm_cube") return prodFmt === "10mm";
+          if (wish === "25.4mm_cube") return prodFmt === "25.4mm";
+          if (wish === "50mm_cube") return prodFmt === "50mm" && prodCat !== "lucite cube";
+          if (wish === "lucite_cube") return prodCat === "lucite cube";
+          if (wish === "ampule" || wish === "ampoule") return prodFmt === "ampoule" || prodCat === "ampoule";
+          return true;
+        };
+
         if (wishlistEntries.length > 0) {
-          logger.info(MODULE, `Found ${wishlistEntries.length} wishlist entries for SKU ${product.sku}. Sending restock alerts...`);
+          logger.info(MODULE, `Found ${wishlistEntries.length} wishlist entries for element ${product.elementSymbol}. Sending restock alerts...`);
           const { notify } = await import("../../lib/notifications-db.server.js");
-          const { notifyRestockAlert } = await import("../../lib/notifications.server.js");
           
           for (const entry of wishlistEntries) {
-            const customer = entry.customer;
-            
-            // Find corresponding User by email
-            const user = await prisma.user.findUnique({
-              where: { email: customer.email }
-            });
+            const user = entry.user;
+            if (!user) continue;
+
+            // Check if format matches
+            if (entry.format && !formatMatches(entry.format, product)) {
+              logger.info(MODULE, `Restock alert skipped for user ${user.email} due to format mismatch (${entry.format} vs product format ${product.format})`);
+              continue;
+            }
 
             const productUrl = `/app/cabinet/shop`;
-            const updatedProductInfo = { ...product, inventoryQty: availableQty };
 
-            if (user) {
-              // Trigger in-app notification + preference-aware email via notify()
-              const dedupeKey = `restock:${product.id}:${availableQty}:${Math.floor(Date.now() / (1000 * 60 * 15))}`;
-              
-              await notify(user.id, {
-                category: "RESTOCK",
-                title: `${product.title} is back in stock!`,
-                body: `${product.title} (${product.elementSymbol}) is now back in stock with ${availableQty} units available.`,
-                linkUrl: productUrl,
-                dedupeKey,
-                email: {
-                  to: user.email,
-                  subject: `🔔 ${product.elementSymbol} is back in stock!`,
-                  template: "restock_alert",
-                  data: {
-                    customerName: user.firstName || customer.firstName,
-                    elementSymbol: product.elementSymbol,
-                    productTitle: product.title,
-                    inventoryQty: availableQty,
-                    linkUrl: productUrl
-                  }
+            // Find corresponding Customer by email if exists, to get name or fallback details
+            const customer = await prisma.customer.findUnique({
+              where: { email: user.email }
+            });
+
+            // Trigger in-app notification + preference-aware email via notify()
+            const dedupeKey = `restock:${product.id}:${availableQty}:${Math.floor(Date.now() / (1000 * 60 * 15))}`;
+            
+            await notify(user.id, {
+              category: "RESTOCK",
+              title: `${product.title} is back in stock!`,
+              body: `${product.title} (${product.elementSymbol}) is now back in stock with ${availableQty} units available.`,
+              linkUrl: productUrl,
+              dedupeKey,
+              email: {
+                to: user.email,
+                subject: `🔔 ${product.elementSymbol} is back in stock!`,
+                template: "restock_alert",
+                data: {
+                  customerName: user.firstName || customer?.firstName || "Collector",
+                  elementSymbol: product.elementSymbol,
+                  productTitle: product.title,
+                  inventoryQty: availableQty,
+                  linkUrl: productUrl
                 }
-              });
-              logger.info(MODULE, `Restock notification successfully dispatched via notify() for user ${user.email} (SKU: ${product.sku})`);
-            } else {
-              // Fallback to direct email if no database User account exists
-              const prefs = customer.preferences;
-              const shouldNotify = entry.notifyOnRestock || (prefs?.restockAlerts !== false);
-              
-              if (shouldNotify) {
-                await notifyRestockAlert(customer, updatedProductInfo);
-                logger.info(MODULE, `Restock direct fallback email sent to customer ${customer.email} (SKU: ${product.sku})`);
-              } else {
-                logger.info(MODULE, `Restock notification skipped for customer ${customer.email} due to preferences`);
               }
-            }
+            });
+            logger.info(MODULE, `Restock notification successfully dispatched via notify() for user ${user.email} (SKU: ${product.sku})`);
           }
         }
       } catch (err) {

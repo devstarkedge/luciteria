@@ -31,6 +31,8 @@ if (process.env.RESEND_API_KEY) {
   const match = emailFrom.match(/<([^>]+)>/);
   if (match && match[1]) {
     userEmail = match[1];
+  } else if (emailFrom && emailFrom.includes('@')) {
+    userEmail = emailFrom.trim();
   }
 
   transporter = nodemailer.createTransport({
