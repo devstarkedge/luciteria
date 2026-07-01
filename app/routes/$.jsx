@@ -3,11 +3,8 @@ import { Link } from "@remix-run/react";
 import ConsumerHeader from "../components/ConsumerHeader";
 import ConsumerFooter from "../components/ConsumerFooter";
 
-export const loader = async ({ request }) => {
-  // If the path made it here, it was not matched by any other route,
-  // and it was not redirected by the root loader's getMarketingRedirect checks.
-  // Return a clean 404 response.
-  return json(null, { status: 404 });
+export const loader = async () => {
+  return null;
 };
 
 export default function CatchAll() {
@@ -29,8 +26,8 @@ export default function CatchAll() {
               <Link to="/" className="btn-primary w-full py-3 text-center text-sm font-semibold rounded-btn transition-colors duration-200">
                 Go to Cabinet Home
               </Link>
-              <a 
-                href="https://luciteria.com" 
+              <a
+                href="https://luciteria.com"
                 target="_blank"
                 rel="noreferrer"
                 className="btn-outline w-full py-3 text-center text-sm font-semibold rounded-btn transition-colors duration-200"
