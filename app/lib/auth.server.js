@@ -116,30 +116,40 @@ export async function verifyLogin({ email, password }) {
     return { user: null, error: "Email and password are required." };
   }
 
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
-  if (!user) {
-    return { user: null, error: "No account found with this email." };
-  }
+  try {
+    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (!user) {
+      return { user: null, error: "No account found with this email." };
+    }
 
-  const valid = await verifyPassword(password, user.passwordHash);
-  if (!valid) {
-    return { user: null, error: "Invalid password." };
-  }
+    const valid = await verifyPassword(password, user.passwordHash);
+    if (!valid) {
+      return { user: null, error: "Invalid password." };
+    }
 
-  return { user, error: null };
+    return { user, error: null };
+  } catch (error) {
+    console.error("[Auth] verifyLogin database error:", error);
+    return { user: null, error: "Database connection failed. Please try again later." };
+  }
 }
 
 /**
  * Get user by ID with all related data
  */
 export async function getUserById(userId) {
-  return prisma.user.findUnique({
-    where: { id: userId },
-    include: {
-      ownedElements: { orderBy: { atomicNumber: "asc" } },
-      wishlistElements: { orderBy: { priority: "asc" } },
-    },
-  });
+  try {
+    return await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        ownedElements: { orderBy: { atomicNumber: "asc" } },
+        wishlistElements: { orderBy: { priority: "asc" } },
+      },
+    });
+  } catch (error) {
+    console.error("[Auth] getUserById database error:", error);
+    return null;
+  }
 }
 
 /**
