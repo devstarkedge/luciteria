@@ -12,11 +12,7 @@ generator client {
 }
 
 datasource db {
-  // PROTOTYPE: SQLite (no server needed)
-  // PRODUCTION: Switch to PostgreSQL:
-  //   provider = "postgresql"
-  //   url      = env("DATABASE_URL")
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
